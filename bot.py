@@ -1,10 +1,12 @@
 import discord
 import requests
 import asyncio
+from dotenv import
+import os
 
-DISCORD_TOKEN = "YOUR_DISCORD_BOT_TOKEN"
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN").strip('"')
 CHANNEL_ID = 1455264200569131079
-TORN_API_KEY = "YOUR_TORN_API_KEY"
+TORN_API_KEY = os.getenv("TORN_API_KEY")
 
 TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}"
 
