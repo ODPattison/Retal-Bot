@@ -1,7 +1,6 @@
 import discord
 import requests
 import asyncio
-from dotenv import
 import os
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN").strip('"')
