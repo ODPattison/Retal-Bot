@@ -51,8 +51,12 @@ async def check_attacks():
                 if attack_id in seen_attacks:
                     continue
 
-                # PURE filter: only logs with a minus sign
-                respect_text = data.get("respect_gain", "")
+                # 🔥 FINAL FILTER: catches attacks + muggings with negative respect
+                respect_text = str(data.get("respect_gain", ""))
+
+                if not respect_text:
+                    respect_text = str(data.get("respect", ""))
+
                 if "-" not in respect_text:
                     continue
 
