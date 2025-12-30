@@ -32,12 +32,12 @@ async def check_attacks():
         await asyncio.sleep(5)
         channel = client.get_channel(CHANNEL_ID)
 
-    # Pre-fill seen attacks
+    # Pre-fill seen_attacks so old attacks aren't reposted
     try:
         response = requests.get(TORN_URL, timeout=10).json()
         attacks = response.get("attacks", {})
         for attack_id in attacks.keys():
-            seen_attacks.add(attack_id)
+            seen_attacks.add(str(attack_id))  # ensure consistent type
     except Exception as e:
         print(f"Error fetching initial attacks: {e}")
 
@@ -47,15 +47,15 @@ async def check_attacks():
             attacks = response.get("attacks", {})
 
             for attack_id, data in attacks.items():
+                attack_id = str(attack_id)  # ensure consistent type
                 if attack_id in seen_attacks:
                     continue
 
-                seen_attacks.add(attack_id)
-
-                # 🔴 FILTER: only incoming attacks (respect lost)
                 respect = data.get("respect", 0)
                 if respect >= 0:
-                    continue
+                    continue  # only negative respect attacks
+
+                seen_attacks.add(attack_id)
 
                 defender = data.get("defender_name", "Unknown")
                 attacker = data.get("attacker_name", "Unknown")
@@ -78,6 +78,6 @@ async def check_attacks():
         except Exception as e:
             print(f"Error fetching attacks: {e}")
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(60)  # check every minute
 
 client.run(DISCORD_TOKEN)
