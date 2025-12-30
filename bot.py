@@ -70,7 +70,10 @@ async def check_attacks():
                     f"🔗 {attacker_link}"
                 )
 
-                await channel.send(message)
+                await channel.send(
+                    f"@here\n{message}",
+                    allowed_mentions=discord.AllowedMentions(everyone=True)
+                )
 
         except Exception as e:
             print(f"Error fetching attacks: {e}")
