@@ -37,7 +37,7 @@ async def check_attacks():
         response = requests.get(TORN_URL, timeout=10).json()
         attacks = response.get("attacks", {})
         for attack_id in attacks.keys():
-            seen_attacks.add(str(attack_id))  # ensure consistent type
+            seen_attacks.add(str(attack_id))
     except Exception as e:
         print(f"Error fetching initial attacks: {e}")
 
@@ -47,13 +47,14 @@ async def check_attacks():
             attacks = response.get("attacks", {})
 
             for attack_id, data in attacks.items():
-                attack_id = str(attack_id)  # ensure consistent type
+                attack_id = str(attack_id)
                 if attack_id in seen_attacks:
                     continue
 
-                respect = data.get("respect", 0)
-                if respect >= 0:
-                    continue  # only negative respect attacks
+                # PURE filter: only logs with a minus sign
+                respect_text = data.get("respect_gain", "")
+                if "-" not in respect_text:
+                    continue
 
                 seen_attacks.add(attack_id)
 
@@ -65,8 +66,9 @@ async def check_attacks():
 
                 message = (
                     f"🚨 **Faction member attacked!** 🚨\n"
-                    f"**Defender:** {defender}\n"
                     f"**Attacker:** {attacker}\n"
+                    f"**Defender:** {defender}\n"
+                    f"**Respect lost:** {respect_text}\n"
                     f"🔗 {attacker_link}"
                 )
 
