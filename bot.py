@@ -3,27 +3,36 @@ import requests
 import asyncio
 import os
 
+# Tokens & IDs
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN").strip('"')
 TORN_API_KEY = os.getenv("TORN_API_KEY")
 CHANNEL_ID = 1455264200569131079
 
 TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}"
 
+# Discord client setup
 intents = discord.Intents.default()
 intents.guilds = True
-intents.messages = True  # ensure the bot can send messages
 client = discord.Client(intents=intents)
 
+# Keep track of attacks we've already posted
 seen_attacks = set()
+
+@client.event
+async def on_ready():
+    print(f"Logged in as {client.user}")
+    client.loop.create_task(check_attacks())
 
 async def check_attacks():
     await client.wait_until_ready()
+
     channel = client.get_channel(CHANNEL_ID)
     while channel is None:
+        print(f"Channel {CHANNEL_ID} not found yet, retrying in 5s...")
         await asyncio.sleep(5)
         channel = client.get_channel(CHANNEL_ID)
 
-    # Prefill seen_attacks
+    # Pre-fill seen_attacks so old attacks aren't reposted
     try:
         response = requests.get(TORN_URL, timeout=10).json()
         attacks = response.get("attacks", {})
@@ -32,7 +41,7 @@ async def check_attacks():
     except Exception as e:
         print(f"Error fetching initial attacks: {e}")
 
-    while True:
+    while not client.is_closed():
         try:
             response = requests.get(TORN_URL, timeout=10).json()
             attacks = response.get("attacks", {})
@@ -42,8 +51,18 @@ async def check_attacks():
                 if attack_id in seen_attacks:
                     continue
 
-                respect_text = str(data.get("respect_gain") or data.get("respect") or "")
-                if "-" not in respect_text:  # only show negative respect attacks
+                # ✅ SAFE negative-respect filter (handles strings + floats)
+                respect_gain = data.get("respect_gain")
+                respect_value = data.get("respect")
+
+                respect_text = ""
+
+                if respect_gain is not None:
+                    respect_text = str(respect_gain)
+                elif respect_value is not None:
+                    respect_text = str(respect_value)
+
+                if "-" not in respect_text:
                     continue
 
                 seen_attacks.add(attack_id)
@@ -51,6 +70,7 @@ async def check_attacks():
                 defender = data.get("defender_name", "Unknown")
                 attacker = data.get("attacker_name", "Unknown")
                 attacker_id = data.get("attacker_id", 0)
+
                 attacker_link = f"https://www.torn.com/profiles.php?XID={attacker_id}"
 
                 message = (
@@ -61,15 +81,14 @@ async def check_attacks():
                     f"🔗 {attacker_link}"
                 )
 
-                await channel.send(f"@here\n{message}", allowed_mentions=discord.AllowedMentions(everyone=True))
+                await channel.send(
+                    f"@here\n{message}",
+                    allowed_mentions=discord.AllowedMentions(everyone=True)
+                )
+
         except Exception as e:
             print(f"Error fetching attacks: {e}")
 
-        await asyncio.sleep(60)
-
-# ✅ Safe background task startup for Discord.py v2.x
-@client.event
-async def setup_hook():
-    asyncio.create_task(check_attacks())
+        await asyncio.sleep(60)  # check every minute
 
 client.run(DISCORD_TOKEN)
