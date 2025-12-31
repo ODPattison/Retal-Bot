@@ -66,9 +66,9 @@ async def check_attacks():
 
         await asyncio.sleep(60)
 
-client.loop.create_task(check_attacks())
+# ✅ Start background task safely using setup_hook
+@client.event
+async def setup_hook():
+    asyncio.create_task(check_attacks())
 
-async def main():
-    await client.start(DISCORD_TOKEN)
-
-asyncio.run(main())
+client.run(DISCORD_TOKEN)
