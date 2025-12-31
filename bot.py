@@ -11,6 +11,7 @@ TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}
 
 intents = discord.Intents.default()
 intents.guilds = True
+intents.messages = True  # ensure the bot can send messages
 client = discord.Client(intents=intents)
 
 seen_attacks = set()
@@ -22,7 +23,7 @@ async def check_attacks():
         await asyncio.sleep(5)
         channel = client.get_channel(CHANNEL_ID)
 
-    # prefill seen_attacks
+    # Prefill seen_attacks
     try:
         response = requests.get(TORN_URL, timeout=10).json()
         attacks = response.get("attacks", {})
@@ -42,7 +43,7 @@ async def check_attacks():
                     continue
 
                 respect_text = str(data.get("respect_gain") or data.get("respect") or "")
-                if "-" not in respect_text:
+                if "-" not in respect_text:  # only show negative respect attacks
                     continue
 
                 seen_attacks.add(attack_id)
@@ -66,7 +67,7 @@ async def check_attacks():
 
         await asyncio.sleep(60)
 
-# ✅ Start background task safely using setup_hook
+# ✅ Safe background task startup for Discord.py v2.x
 @client.event
 async def setup_hook():
     asyncio.create_task(check_attacks())
