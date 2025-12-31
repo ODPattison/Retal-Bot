@@ -51,11 +51,16 @@ async def check_attacks():
                 if attack_id in seen_attacks:
                     continue
 
-                # 🔥 FINAL FILTER: catches attacks + muggings with negative respect
-                respect_text = str(data.get("respect_gain", ""))
+                # ✅ SAFE negative-respect filter (handles strings + floats)
+                respect_gain = data.get("respect_gain")
+                respect_value = data.get("respect")
 
-                if not respect_text:
-                    respect_text = str(data.get("respect", ""))
+                respect_text = ""
+
+                if respect_gain is not None:
+                    respect_text = str(respect_gain)
+                elif respect_value is not None:
+                    respect_text = str(respect_value)
 
                 if "-" not in respect_text:
                     continue
