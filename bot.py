@@ -6,7 +6,7 @@ import os
 # Tokens & IDs
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN").strip('"')
 TORN_API_KEY = os.getenv("TORN_API_KEY")
-CHANNEL_ID = 1455264200569131079
+CHANNEL_ID = 1456632006602391696
 FACTION_ID = 52125  # your faction ID
 
 TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}"
