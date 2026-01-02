@@ -106,17 +106,17 @@ async def check_attacks():
                 if data.get("attacker_faction") == FACTION_ID:
                     continue
 
-                attacker_id = data.get("attacker_id", 0)
-                if not str(attacker_id).isdigit() or int(attacker_id) <= 0:
-                    continue
-
-                attacker = data.get("attacker_name", "Unknown")
+                attacker = data.get("attacker_name", "Someone")
                 defender = data.get("defender_name", "Unknown")
                 respect = data.get("respect", "Unknown")
                 result = data.get("result", "Attacked")
 
-                attacker_link = f"https://www.torn.com/profiles.php?XID={attacker_id}"
-                bs_est = get_bs_estimate(int(attacker_id))
+                # Attacker ID can be blank/0 for stealthed attacks
+                raw_attacker_id = data.get("attacker_id", 0)
+                attacker_id = int(raw_attacker_id) if str(raw_attacker_id).isdigit() else 0
+
+                attacker_link = f"https://www.torn.com/profiles.php?XID={attacker_id}" if attacker_id > 0 else None
+                bs_est = get_bs_estimate(attacker_id) if attacker_id > 0 else None
 
                 message = (
                     f"🚨 **Faction Member {result}!** 🚨\n"
@@ -124,7 +124,7 @@ async def check_attacks():
                     f"**Defender:** {defender}\n"
                     f"**Respect Lost:** {respect}\n"
                     + (f"📊 **Est. Battle Stats:** {bs_est}\n" if bs_est else "")
-                    + f"🔗 {attacker_link}"
+                    + (f"🔗 {attacker_link}" if attacker_link else "🔗 *(Stealthed attacker — no profile link)*")
                 )
 
                 await channel.send(
