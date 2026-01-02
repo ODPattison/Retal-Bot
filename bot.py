@@ -4,32 +4,38 @@ import asyncio
 import os
 import time
 
+# ======================
 # Tokens & IDs
+# ======================
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN").strip('"')
 TORN_API_KEY = os.getenv("TORN_API_KEY")
-FFSCOUTER_KEY = os.getenv("FFSCOUTER_KEY")  # NEW: set in .env / Railway Variables
+FFSCOUTER_KEY = os.getenv("FFSCOUTER_KEY")
 
 CHANNEL_ID = 1456632006602391696
-FACTION_ID = 52125  # your faction ID
+FACTION_ID = 52125
 
 TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}"
-FFSCOUTER_URL = "https://ffscouter.com/api/v1/get-stats"  # NEW
+FFSCOUTER_URL = "https://ffscouter.com/api/v1/get-stats"
 
-# Discord client setup
+# ======================
+# Discord setup
+# ======================
 intents = discord.Intents.default()
 intents.guilds = True
 client = discord.Client(intents=intents)
 
-# Keep track of attacks we've already posted
+# ======================
+# State & cache
+# ======================
 seen_attacks = set()
 
-# NEW: simple cache to avoid hammering FFScouter
-stat_cache = {}     # {player_id: {"value": "2.99b", "ts": unix_time}}
-CACHE_TTL = 10 * 60  # 10 mins
+stat_cache = {}          # {player_id: {"value": "2.99b", "ts": unix}}
+CACHE_TTL = 10 * 60      # 10 minutes
 
-
+# ======================
+# FFScouter helper
+# ======================
 def get_bs_estimate(player_id: int):
-    """Returns FFScouter bs_estimate_human string (e.g. '2.99b') or None."""
     if not FFSCOUTER_KEY or not player_id:
         return None
 
@@ -46,7 +52,6 @@ def get_bs_estimate(player_id: int):
         )
         data = r.json()
 
-        # Expected: list with one dict
         if isinstance(data, list) and data:
             est = data[0].get("bs_estimate_human")
             if est:
@@ -57,13 +62,17 @@ def get_bs_estimate(player_id: int):
 
     return None
 
-
+# ======================
+# Bot events
+# ======================
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user}")
     client.loop.create_task(check_attacks())
 
-
+# ======================
+# Main loop
+# ======================
 async def check_attacks():
     await client.wait_until_ready()
 
@@ -73,11 +82,10 @@ async def check_attacks():
         await asyncio.sleep(5)
         channel = client.get_channel(CHANNEL_ID)
 
-    # Pre-fill seen_attacks so old attacks aren't reposted
+    # Pre-fill seen attacks
     try:
         response = requests.get(TORN_URL, timeout=10).json()
-        attacks = response.get("attacks", {})
-        for attack_id in attacks.keys():
+        for attack_id in response.get("attacks", {}).keys():
             seen_attacks.add(str(attack_id))
     except Exception as e:
         print(f"Error fetching initial attacks: {e}")
@@ -92,32 +100,23 @@ async def check_attacks():
                 if attack_id in seen_attacks:
                     continue
 
-                attacker_faction = data.get("attacker_faction")
-
-                # Ignore attacks made BY our faction
-                if attacker_faction == FACTION_ID:
-                    seen_attacks.add(attack_id)
-                    continue
-
                 seen_attacks.add(attack_id)
 
-                defender = data.get("defender_name", "Unknown")
-                attacker = data.get("attacker_name", "Unknown")
-                attacker_id = data.get("attacker_id", 0)
-                respect = data.get("respect", "Unknown")
+                # Ignore our own faction attacks
+                if data.get("attacker_faction") == FACTION_ID:
+                    continue
 
-                # pull what happened (Attacked/Hospitalized/Mugged/etc.)
-                result = data.get("result", "Attacked")  # safe fallback
+                attacker_id = data.get("attacker_id", 0)
+                if not str(attacker_id).isdigit() or int(attacker_id) <= 0:
+                    continue
+
+                attacker = data.get("attacker_name", "Unknown")
+                defender = data.get("defender_name", "Unknown")
+                respect = data.get("respect", "Unknown")
+                result = data.get("result", "Attacked")
 
                 attacker_link = f"https://www.torn.com/profiles.php?XID={attacker_id}"
-
-                # NEW: battle stat estimate (if attacker_id valid + FFSCOUTER_KEY set)
-                bs_est = None
-                try:
-                    if str(attacker_id).isdigit() and int(attacker_id) > 0:
-                        bs_est = get_bs_estimate(int(attacker_id))
-                except Exception as e:
-                    print(f"Error getting bs estimate: {e}")
+                bs_est = get_bs_estimate(int(attacker_id))
 
                 message = (
                     f"🚨 **Faction Member {result}!** 🚨\n"
@@ -125,13 +124,13 @@ async def check_attacks():
                     f"**Defender:** {defender}\n"
                     f"**Respect Lost:** {respect}\n"
                     + (f"📊 **Est. Battle Stats:** {bs_est}\n" if bs_est else "")
-                    f"🔗 {attacker_link}"
+                    + f"🔗 {attacker_link}"
                 )
 
                 await channel.send(
                     f"@here\n{message}",
                     allowed_mentions=discord.AllowedMentions(everyone=True),
-                    delete_after=300  # auto-delete after 5 minutes
+                    delete_after=300
                 )
 
         except Exception as e:
@@ -139,5 +138,7 @@ async def check_attacks():
 
         await asyncio.sleep(60)
 
-
+# ======================
+# Run
+# ======================
 client.run(DISCORD_TOKEN)
