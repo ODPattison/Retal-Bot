@@ -7,6 +7,7 @@ import os
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN").strip('"')
 TORN_API_KEY = os.getenv("TORN_API_KEY")
 CHANNEL_ID = 1455264200569131079
+FACTION_ID = 52125  # your faction ID
 
 TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}"
 
@@ -51,18 +52,11 @@ async def check_attacks():
                 if attack_id in seen_attacks:
                     continue
 
-                # ✅ SAFE negative-respect filter (handles strings + floats)
-                respect_gain = data.get("respect_gain")
-                respect_value = data.get("respect")
+                attacker_faction = data.get("attacker_faction")
 
-                respect_text = ""
-
-                if respect_gain is not None:
-                    respect_text = str(respect_gain)
-                elif respect_value is not None:
-                    respect_text = str(respect_value)
-
-                if "-" not in respect_text:
+                # Ignore attacks made BY our faction
+                if attacker_faction == FACTION_ID:
+                    seen_attacks.add(attack_id)
                     continue
 
                 seen_attacks.add(attack_id)
@@ -70,6 +64,7 @@ async def check_attacks():
                 defender = data.get("defender_name", "Unknown")
                 attacker = data.get("attacker_name", "Unknown")
                 attacker_id = data.get("attacker_id", 0)
+                respect = data.get("respect", "Unknown")
 
                 attacker_link = f"https://www.torn.com/profiles.php?XID={attacker_id}"
 
@@ -77,7 +72,7 @@ async def check_attacks():
                     f"🚨 **Faction member attacked!** 🚨\n"
                     f"**Attacker:** {attacker}\n"
                     f"**Defender:** {defender}\n"
-                    f"**Respect lost:** {respect_text}\n"
+                    f"**Respect:** {respect}\n"
                     f"🔗 {attacker_link}"
                 )
 
@@ -89,6 +84,6 @@ async def check_attacks():
         except Exception as e:
             print(f"Error fetching attacks: {e}")
 
-        await asyncio.sleep(60)  # check every minute
+        await asyncio.sleep(60)
 
 client.run(DISCORD_TOKEN)
