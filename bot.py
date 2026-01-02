@@ -72,7 +72,7 @@ async def check_attacks():
                 attacker_link = f"https://www.torn.com/profiles.php?XID={attacker_id}"
 
                 message = (
-                    f"🚨 **Faction member {result}!** 🚨\n"
+                    f"🚨 **Faction Member {result}!** 🚨\n"
                     f"**Attacker:** {attacker}\n"
                     f"**Defender:** {defender}\n"
                     f"**Respect Lost:** {respect}\n"
