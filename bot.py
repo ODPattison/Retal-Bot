@@ -18,6 +18,12 @@ TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}
 FFSCOUTER_URL = "https://ffscouter.com/api/v1/get-stats"
 
 # ======================
+# Retal window
+# ======================
+RETAL_WINDOW_SECONDS = 5 * 60
+RETAL_WINDOW_LABEL = "5 minutes"  # just for display
+
+# ======================
 # Discord setup
 # ======================
 intents = discord.Intents.default()
@@ -120,6 +126,7 @@ async def check_attacks():
 
                 message = (
                     f"🚨 **Faction Member {result}!** 🚨\n"
+                    f"⏳ **Retal Window:** {RETAL_WINDOW_LABEL}\n"
                     f"**Attacker:** {attacker}\n"
                     f"**Defender:** {defender}\n"
                     f"**Respect Lost:** {respect}\n"
@@ -130,7 +137,7 @@ async def check_attacks():
                 await channel.send(
                     f"@here\n{message}",
                     allowed_mentions=discord.AllowedMentions(everyone=True),
-                    delete_after=300
+                    delete_after=RETAL_WINDOW_SECONDS
                 )
 
         except Exception as e:
