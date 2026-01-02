@@ -72,13 +72,14 @@ async def check_attacks():
                     f"🚨 **Faction member attacked!** 🚨\n"
                     f"**Attacker:** {attacker}\n"
                     f"**Defender:** {defender}\n"
-                    f"**Respect:** {respect}\n"
+                    f"**Respect Lost:** {respect}\n"
                     f"🔗 {attacker_link}"
                 )
 
                 await channel.send(
                     f"@here\n{message}",
-                    allowed_mentions=discord.AllowedMentions(everyone=True)
+                    allowed_mentions=discord.AllowedMentions(everyone=True),
+                    delete_after=300  # auto-delete after 5 minutes
                 )
 
         except Exception as e:
