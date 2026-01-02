@@ -66,10 +66,13 @@ async def check_attacks():
                 attacker_id = data.get("attacker_id", 0)
                 respect = data.get("respect", "Unknown")
 
+                # NEW: pull what happened (Attacked/Hospitalized/Mugged/etc.)
+                result = data.get("result", "Attacked")  # safe fallback
+
                 attacker_link = f"https://www.torn.com/profiles.php?XID={attacker_id}"
 
                 message = (
-                    f"🚨 **Faction member attacked!** 🚨\n"
+                    f"🚨 **Faction member {result}!** 🚨\n"
                     f"**Attacker:** {attacker}\n"
                     f"**Defender:** {defender}\n"
                     f"**Respect Lost:** {respect}\n"
