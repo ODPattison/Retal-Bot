@@ -21,7 +21,6 @@ FFSCOUTER_URL = "https://ffscouter.com/api/v1/get-stats"
 # Retal window
 # ======================
 RETAL_WINDOW_SECONDS = 5 * 60
-RETAL_WINDOW_LABEL = "5 minutes"  # just for display
 
 # ======================
 # Discord setup
@@ -39,7 +38,7 @@ stat_cache = {}          # {player_id: {"value": "2.99b", "ts": unix}}
 CACHE_TTL = 10 * 60      # 10 minutes
 
 # ======================
-# FFScouter helper
+# Helpers
 # ======================
 def get_bs_estimate(player_id: int):
     if not FFSCOUTER_KEY or not player_id:
@@ -67,6 +66,19 @@ def get_bs_estimate(player_id: int):
         print(f"FFScouter lookup failed for {player_id}: {e}")
 
     return None
+
+def get_attack_timestamp(data: dict) -> int:
+    """
+    Torn attacks usually include a unix timestamp.
+    We try common keys and fall back to 'now' if missing.
+    """
+    for k in ("timestamp_ended", "timestamp_started", "timestamp"):
+        v = data.get(k)
+        if isinstance(v, (int, float)) and v > 0:
+            return int(v)
+        if isinstance(v, str) and v.isdigit():
+            return int(v)
+    return int(time.time())
 
 # ======================
 # Bot events
@@ -124,9 +136,16 @@ async def check_attacks():
                 attacker_link = f"https://www.torn.com/profiles.php?XID={attacker_id}" if attacker_id > 0 else None
                 bs_est = get_bs_estimate(attacker_id) if attacker_id > 0 else None
 
+                # Live retal timer using Discord relative timestamps
+                attack_ts = get_attack_timestamp(data)
+                retal_expires_ts = attack_ts + RETAL_WINDOW_SECONDS
+
+                now_ts = int(time.time())
+                delete_in = max(5, retal_expires_ts - now_ts)  # ensure a minimum so it can post
+
                 message = (
                     f"🚨 **Faction Member {result}!** 🚨\n"
-                    f"⏳ **Retal Window:** {RETAL_WINDOW_LABEL}\n"
+                    f"⏳ **Retal ends:** <t:{retal_expires_ts}:R>\n"
                     f"**Attacker:** {attacker}\n"
                     f"**Defender:** {defender}\n"
                     f"**Respect Lost:** {respect}\n"
@@ -137,7 +156,7 @@ async def check_attacks():
                 await channel.send(
                     f"@here\n{message}",
                     allowed_mentions=discord.AllowedMentions(everyone=True),
-                    delete_after=RETAL_WINDOW_SECONDS
+                    delete_after=delete_in
                 )
 
         except Exception as e:
