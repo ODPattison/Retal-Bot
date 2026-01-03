@@ -159,6 +159,11 @@ async def check_attacks():
                 respect = data.get("respect", "Unknown")
                 result = data.get("result", "Attacked")
 
+                # NEW: Ignore non-retalable outcomes (successful defends / no outcome)
+                result_norm = str(result).strip().lower()
+                if result_norm in ("lost", "stalemate"):
+                    continue
+
                 # Stealthed attacks can have attacker_id blank or 0
                 raw_attacker_id = data.get("attacker_id", 0)
                 attacker_id = int(raw_attacker_id) if str(raw_attacker_id).isdigit() else 0
