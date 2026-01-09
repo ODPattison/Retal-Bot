@@ -161,7 +161,7 @@ async def check_attacks():
 
                 # NEW: Ignore non-retalable outcomes (successful defends / no outcome)
                 result_norm = str(result).strip().lower()
-                if result_norm in ("lost", "stalemate"):
+                if result_norm in ("lost", "stalemate", "interrupted"):
                     continue
 
                 # Stealthed attacks can have attacker_id blank or 0
