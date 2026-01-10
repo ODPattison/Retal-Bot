@@ -7,12 +7,22 @@ import time
 # ============================================================
 # CONFIG: Secrets + IDs
 # ============================================================
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN").strip('"')
+DISCORD_TOKEN = (os.getenv("DISCORD_TOKEN") or "").strip().strip('"')
 TORN_API_KEY = os.getenv("TORN_API_KEY")
 FFSCOUTER_KEY = os.getenv("FFSCOUTER_KEY")
 
-CHANNEL_ID = 1456632006602391696
-FACTION_ID = 52125
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
+FACTION_ID = int(os.getenv("FACTION_ID", "0"))
+
+# Optional: crash early if config missing (recommended)
+if not DISCORD_TOKEN:
+    raise ValueError("Missing DISCORD_TOKEN env var")
+
+if CHANNEL_ID == 0:
+    raise ValueError("Missing or invalid CHANNEL_ID env var")
+
+if FACTION_ID == 0:
+    raise ValueError("Missing or invalid FACTION_ID env var")
 
 # ============================================================
 # API Endpoints
