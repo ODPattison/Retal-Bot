@@ -26,6 +26,11 @@ FFSCOUTER_URL = "https://ffscouter.com/api/v1/get-stats"
 RETAL_WINDOW_SECONDS = 5 * 60
 
 # ============================================================
+# Command cleanup window (delete command + response)
+# ============================================================
+COMMAND_CLEANUP_SECONDS = 5 * 60  # 5 minutes
+
+# ============================================================
 # Discord Client
 # - We need message_content to read commands like !quiet on/off
 # ============================================================
@@ -91,6 +96,7 @@ def get_attack_timestamp(data: dict) -> int:
 #   !quiet off
 #   !quiet status
 # (restricted to admins / manage_guild)
+# Deletes BOTH the command message + bot response after 5 mins
 # ============================================================
 @client.event
 async def on_message(message: discord.Message):
@@ -108,28 +114,53 @@ async def on_message(message: discord.Message):
     if not content.startswith("!quiet"):
         return
 
+    # schedule deletion of the user's command after 5 mins (best effort)
+    async def delete_command_later(msg: discord.Message):
+        await asyncio.sleep(COMMAND_CLEANUP_SECONDS)
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
+    client.loop.create_task(delete_command_later(message))
+
     # permission check: admin or manage_guild
     perms = getattr(message.author, "guild_permissions", None)
     if not perms or not (perms.administrator or perms.manage_guild):
-        await message.channel.send("Hmm, I don't think so, only admins can shut me up🤭")
+        await message.channel.send(
+            "Hmm, I don't think so, only admins can shut me up🤭",
+            delete_after=COMMAND_CLEANUP_SECONDS
+        )
         return
 
     parts = content.split()
     if len(parts) == 1 or parts[1] == "status":
-        await message.channel.send(f"🙄Stop asking me things, quiet mode is **{'ON' if QUIET_MODE else 'OFF'}**.")
+        await message.channel.send(
+            f"🙄Stop asking me things, quiet mode is **{'ON' if QUIET_MODE else 'OFF'}**.",
+            delete_after=COMMAND_CLEANUP_SECONDS
+        )
         return
 
     if parts[1] in ("on", "true", "1", "enable", "enabled"):
         QUIET_MODE = True
-        await message.channel.send("😡Fine I'll be quiet. Quiet mode **ON** — no more `@here` pings. Dick")
+        await message.channel.send(
+            "😡Fine I'll be quiet. Quiet mode **ON** — no more `@here` pings. Dick",
+            delete_after=COMMAND_CLEANUP_SECONDS
+        )
         return
 
     if parts[1] in ("off", "false", "0", "disable", "disabled"):
         QUIET_MODE = False
-        await message.channel.send("😘Awh you missed me. Quiet mode **OFF** — `@here` pings are back. ^.^ ")
+        await message.channel.send(
+            "😘Awh you missed me. Quiet mode **OFF** — `@here` pings are back. ^.^ ",
+            delete_after=COMMAND_CLEANUP_SECONDS
+        )
         return
 
-    await message.channel.send("Usage: `!quiet on`, `!quiet off`, or `!quiet status`")
+    await message.channel.send(
+        "Usage: `!quiet on`, `!quiet off`, or `!quiet status`",
+        delete_after=COMMAND_CLEANUP_SECONDS
+    )
 
 # ============================================================
 # Bot Startup
