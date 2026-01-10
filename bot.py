@@ -6,9 +6,6 @@ import time
 
 # ============================================================
 # CONFIG: Secrets + IDs
-# - Tokens come from Railway / .env variables
-# - CHANNEL_ID is where the bot posts
-# - FACTION_ID is your faction (used to ignore your own attacks)
 # ============================================================
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN").strip('"')
 TORN_API_KEY = os.getenv("TORN_API_KEY")
@@ -19,48 +16,38 @@ FACTION_ID = 52125
 
 # ============================================================
 # API Endpoints
-# - Torn provides the faction attack feed
-# - FFScouter provides optional battle stat estimates
 # ============================================================
 TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}"
 FFSCOUTER_URL = "https://ffscouter.com/api/v1/get-stats"
 
 # ============================================================
 # Retal Window
-# - Torn retal window is 5 minutes
-# - We delete the Discord message when that window ends
-# - We display a live countdown using Discord timestamp markup
 # ============================================================
 RETAL_WINDOW_SECONDS = 5 * 60
 
 # ============================================================
 # Discord Client
-# - Minimal intents required to find the channel and send messages
+# - We need message_content to read commands like !quiet on/off
 # ============================================================
 intents = discord.Intents.default()
 intents.guilds = True
+intents.message_content = True  # IMPORTANT for reading chat commands
 client = discord.Client(intents=intents)
 
 # ============================================================
 # Runtime State
-# - seen_attacks prevents duplicate posts while the bot is running
-# - this is IN MEMORY only (it resets on restart)
 # ============================================================
 seen_attacks = set()
 
+# Quiet mode (in-memory)
+QUIET_MODE = False
+
 # ============================================================
 # FFScouter Cache
-# - avoids hammering FFScouter with repeated lookups
-# - caches estimates per attacker_id for CACHE_TTL seconds
 # ============================================================
 stat_cache = {}          # {player_id: {"value": "2.99b", "ts": unix}}
 CACHE_TTL = 10 * 60      # 10 minutes
 
-# ============================================================
-# FFScouter Lookup
-# - returns a human-readable battle stat estimate (eg "2.99b")
-# - returns None if unavailable (stealth, missing key, API fail)
-# ============================================================
 def get_bs_estimate(player_id: int):
     if not FFSCOUTER_KEY or not player_id:
         return None
@@ -88,11 +75,6 @@ def get_bs_estimate(player_id: int):
 
     return None
 
-# ============================================================
-# Timestamp Helper
-# - Torn attacks include a unix timestamp (key name can vary)
-# - we try common keys and fall back to "now" so the bot never breaks
-# ============================================================
 def get_attack_timestamp(data: dict) -> int:
     for k in ("timestamp_ended", "timestamp_started", "timestamp"):
         v = data.get(k)
@@ -103,9 +85,54 @@ def get_attack_timestamp(data: dict) -> int:
     return int(time.time())
 
 # ============================================================
+# Discord command handler
+# Commands:
+#   !quiet on
+#   !quiet off
+#   !quiet status
+# (restricted to admins / manage_guild)
+# ============================================================
+@client.event
+async def on_message(message: discord.Message):
+    global QUIET_MODE
+
+    # ignore bots (including ourselves)
+    if message.author.bot:
+        return
+
+    # keep commands scoped to your channel (optional but tidy)
+    if message.channel.id != CHANNEL_ID:
+        return
+
+    content = (message.content or "").strip().lower()
+    if not content.startswith("!quiet"):
+        return
+
+    # permission check: admin or manage_guild
+    perms = getattr(message.author, "guild_permissions", None)
+    if not perms or not (perms.administrator or perms.manage_guild):
+        await message.channel.send("Nah 😅 only admins / Manage Server can toggle quiet mode.")
+        return
+
+    parts = content.split()
+    if len(parts) == 1 or parts[1] == "status":
+        await message.channel.send(f"🔇 Quiet mode is **{'ON' if QUIET_MODE else 'OFF'}**.")
+        return
+
+    if parts[1] in ("on", "true", "1", "enable", "enabled"):
+        QUIET_MODE = True
+        await message.channel.send("🔇 Quiet mode **ON** — no more `@here` pings.")
+        return
+
+    if parts[1] in ("off", "false", "0", "disable", "disabled"):
+        QUIET_MODE = False
+        await message.channel.send("📣 Quiet mode **OFF** — `@here` pings are back.")
+        return
+
+    await message.channel.send("Usage: `!quiet on`, `!quiet off`, or `!quiet status`")
+
+# ============================================================
 # Bot Startup
-# - on_ready fires once when the bot logs in
-# - we kick off the background attack polling loop
 # ============================================================
 @client.event
 async def on_ready():
@@ -114,23 +141,18 @@ async def on_ready():
 
 # ============================================================
 # Main Polling Loop
-# - polls Torn every 60s for new faction attacks
-# - ignores:
-#   - attacks we've already posted (seen_attacks)
-#   - attacks made BY our faction (attacker_faction == FACTION_ID)
-# - posts to Discord and deletes the message when retal expires
 # ============================================================
 async def check_attacks():
+    global QUIET_MODE
     await client.wait_until_ready()
 
-    # Wait until Discord has the channel object available
     channel = client.get_channel(CHANNEL_ID)
     while channel is None:
         print(f"Channel {CHANNEL_ID} not found yet, retrying in 5s...")
         await asyncio.sleep(5)
         channel = client.get_channel(CHANNEL_ID)
 
-    # On boot: mark current attacks as "already seen" so we don't spam old stuff
+    # On boot: mark current attacks as "already seen"
     try:
         response = requests.get(TORN_URL, timeout=10).json()
         for attack_id in response.get("attacks", {}).keys():
@@ -153,29 +175,25 @@ async def check_attacks():
                 if data.get("attacker_faction") == FACTION_ID:
                     continue
 
-                # Core attack info
                 attacker = data.get("attacker_name", "Someone")
                 defender = data.get("defender_name", "Unknown")
                 respect = data.get("respect", "Unknown")
                 result = data.get("result", "Attacked")
 
-                # NEW: Ignore non-retalable outcomes (successful defends / no outcome)
+                # Ignore non-retalable outcomes
                 result_norm = str(result).strip().lower()
                 if result_norm in ("lost", "stalemate", "interrupted"):
                     continue
 
-                # Stealthed attacks can have attacker_id blank or 0
                 raw_attacker_id = data.get("attacker_id", 0)
                 attacker_id = int(raw_attacker_id) if str(raw_attacker_id).isdigit() else 0
 
                 attacker_link = f"https://www.torn.com/profiles.php?XID={attacker_id}" if attacker_id > 0 else None
                 bs_est = get_bs_estimate(attacker_id) if attacker_id > 0 else None
 
-                # Live retal countdown (Discord renders this automatically)
                 attack_ts = get_attack_timestamp(data)
                 retal_expires_ts = attack_ts + RETAL_WINDOW_SECONDS
 
-                # Delete the post when retal expires (minimum delay so it can post)
                 now_ts = int(time.time())
                 delete_in = max(5, retal_expires_ts - now_ts)
 
@@ -189,11 +207,19 @@ async def check_attacks():
                     + (f"🔗 {attacker_link}" if attacker_link else "🔗 *(Stealthed attacker — no profile link)*")
                 )
 
-                await channel.send(
-                    f"@here\n{message}",
-                    allowed_mentions=discord.AllowedMentions(everyone=True),
-                    delete_after=delete_in
-                )
+                # QUIET MODE: no @here, and block mention pings completely
+                if QUIET_MODE:
+                    await channel.send(
+                        message,
+                        allowed_mentions=discord.AllowedMentions.none(),
+                        delete_after=delete_in
+                    )
+                else:
+                    await channel.send(
+                        f"@here\n{message}",
+                        allowed_mentions=discord.AllowedMentions(everyone=True),
+                        delete_after=delete_in
+                    )
 
         except Exception as e:
             print(f"Error fetching attacks: {e}")
