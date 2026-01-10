@@ -111,22 +111,22 @@ async def on_message(message: discord.Message):
     # permission check: admin or manage_guild
     perms = getattr(message.author, "guild_permissions", None)
     if not perms or not (perms.administrator or perms.manage_guild):
-        await message.channel.send("Nah 😅 only admins / Manage Server can toggle quiet mode.")
+        await message.channel.send("Hmm, I don't think so, only admins can shut me up🤭")
         return
 
     parts = content.split()
     if len(parts) == 1 or parts[1] == "status":
-        await message.channel.send(f"🔇 Quiet mode is **{'ON' if QUIET_MODE else 'OFF'}**.")
+        await message.channel.send(f"🙄Stop asking me things, quiet mode is **{'ON' if QUIET_MODE else 'OFF'}**.")
         return
 
     if parts[1] in ("on", "true", "1", "enable", "enabled"):
         QUIET_MODE = True
-        await message.channel.send("🔇 Quiet mode **ON** — no more `@here` pings.")
+        await message.channel.send("😡Fine I'll be quiet. Quiet mode **ON** — no more `@here` pings. Dick")
         return
 
     if parts[1] in ("off", "false", "0", "disable", "disabled"):
         QUIET_MODE = False
-        await message.channel.send("📣 Quiet mode **OFF** — `@here` pings are back.")
+        await message.channel.send("😘Awh you missed me. Quiet mode **OFF** — `@here` pings are back. ^.^ ")
         return
 
     await message.channel.send("Usage: `!quiet on`, `!quiet off`, or `!quiet status`")
