@@ -5,6 +5,12 @@ import os
 import time
 
 # ============================================================
+# Retal Bot
+# Version: 🔧 v1.4.3
+# Change: Fixed respect output to use respect_loss (correct Torn API field)
+# ============================================================
+
+# ============================================================
 # CONFIG: Secrets + IDs
 # ============================================================
 DISCORD_TOKEN = (os.getenv("DISCORD_TOKEN") or "").strip().strip('"')
@@ -98,6 +104,22 @@ def get_attack_timestamp(data: dict) -> int:
         if isinstance(v, str) and v.isdigit():
             return int(v)
     return int(time.time())
+
+def format_respect_loss(value):
+    """
+    Torn's respect_loss is usually a float.
+    We format to 2dp, then strip trailing zeros/dot so it looks clean.
+    """
+    if isinstance(value, (int, float)):
+        return f"{value:.2f}".rstrip("0").rstrip(".")
+    if isinstance(value, str):
+        # best effort for stringy numbers
+        try:
+            f = float(value)
+            return f"{f:.2f}".rstrip("0").rstrip(".")
+        except Exception:
+            return value
+    return "Unknown"
 
 # ============================================================
 # Discord command handler
@@ -218,7 +240,11 @@ async def check_attacks():
 
                 attacker = data.get("attacker_name", "Someone")
                 defender = data.get("defender_name", "Unknown")
-                respect = data.get("respect", "Unknown")
+
+                # ✅ FIX: respect loss is in respect_loss
+                respect_loss_raw = data.get("respect_loss", None)
+                respect_loss = format_respect_loss(respect_loss_raw)
+
                 result = data.get("result", "Attacked")
 
                 # Ignore non-retalable outcomes
@@ -243,7 +269,7 @@ async def check_attacks():
                     f"⏳ **Retal ends:** <t:{retal_expires_ts}:R>\n"
                     f"**Attacker:** {attacker}\n"
                     f"**Defender:** {defender}\n"
-                    f"**Respect Lost:** {respect}\n"
+                    f"**Respect Lost:** {respect_loss}\n"
                     + (f"📊 **Est. Battle Stats:** {bs_est}\n" if bs_est else "")
                     + (f"🔗 {attacker_link}" if attacker_link else "🔗 *(Stealthed attacker — no profile link)*")
                 )
