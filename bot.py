@@ -159,7 +159,7 @@ async def on_message(message: discord.Message):
         if now - last >= WRONG_CHANNEL_COOLDOWN:
             last_wrong_channel_notice[key] = now
             await message.channel.send(
-                f"Hey {message.author.mention} 😒 commands go in <#{CHANNEL_ID}>.",
+                f"Hey {message.author.mention} you fucking idiot, commands go in <#{CHANNEL_ID}>... MORON 🙄",
                 delete_after=20
             )
         return
