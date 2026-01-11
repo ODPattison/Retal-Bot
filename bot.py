@@ -6,8 +6,8 @@ import time
 
 # ============================================================
 # Retal Bot
-# Version: 🔧 v1.4.3
-# Change: Fixed respect output to use respect_loss (correct Torn API field)
+# Version: 🔧 v1.4.4
+# Change: Added wrong-channel warning for !quiet commands (with cooldown)
 # ============================================================
 
 # ============================================================
@@ -45,6 +45,12 @@ RETAL_WINDOW_SECONDS = 5 * 60
 # Command cleanup window (delete command + response)
 # ============================================================
 COMMAND_CLEANUP_SECONDS = 5 * 60  # 5 minutes
+
+# ============================================================
+# Wrong channel command warning (anti spam)
+# ============================================================
+WRONG_CHANNEL_COOLDOWN = 30  # seconds
+last_wrong_channel_notice = {}  # {(channel_id, user_id): ts}
 
 # ============================================================
 # Discord Client
@@ -138,12 +144,31 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # keep commands scoped to your channel (optional but tidy)
+    content_raw = (message.content or "").strip()
+    content = content_raw.lower()
+
+    # Only treat !quiet as a command (ignore everything else)
+    is_quiet_command = content.startswith("!quiet")
+
+    # If someone tries !quiet in the wrong channel, warn them in that channel
+    if is_quiet_command and message.channel.id != CHANNEL_ID:
+        now = int(time.time())
+        key = (message.channel.id, message.author.id)
+        last = last_wrong_channel_notice.get(key, 0)
+
+        if now - last >= WRONG_CHANNEL_COOLDOWN:
+            last_wrong_channel_notice[key] = now
+            await message.channel.send(
+                f"Hey {message.author.mention} 😒 commands go in <#{CHANNEL_ID}>.",
+                delete_after=20
+            )
+        return
+
+    # Keep actual command handling scoped to your channel
     if message.channel.id != CHANNEL_ID:
         return
 
-    content = (message.content or "").strip().lower()
-    if not content.startswith("!quiet"):
+    if not is_quiet_command:
         return
 
     # schedule deletion of the user's command after 5 mins (best effort)
