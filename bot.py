@@ -320,7 +320,7 @@ async def check_enemy_travel():
                     # ✅ FIXED: missing quotes (this is what was crashing Railway)
                     if not times:
                         msg = (
-                            ✈️ **Enemy takeoff!**\n"
+                            "✈️ **Enemy takeoff!**\n"
                             f"**{name}** [{uid}] → **{dest}**\n"
                             "_(No travel time data for this destination yet)_"
                         )
