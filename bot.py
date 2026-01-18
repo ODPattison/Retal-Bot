@@ -3,11 +3,13 @@ import requests
 import asyncio
 import os
 import time
+import re
+from datetime import datetime, timedelta, timezone
 
 # ============================================================
 # Retal Bot
-# Version: 🔧 v1.4.4
-# Change: Added wrong-channel warning for !quiet commands (with cooldown)
+# Version: 🔧 v1.5.1
+# Change: Added enemy flight takeoff tracking with @here logic + auto delete on landing (std + buffer)
 # ============================================================
 
 # ============================================================
@@ -19,6 +21,9 @@ FFSCOUTER_KEY = os.getenv("FFSCOUTER_KEY")
 
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 FACTION_ID = int(os.getenv("FACTION_ID", "0"))
+
+# NEW: Enemy faction to track (set per war)
+ENEMY_FACTION_ID = int(os.getenv("ENEMY_FACTION_ID", "0"))
 
 # Optional: crash early if config missing (recommended)
 if not DISCORD_TOKEN:
@@ -35,6 +40,9 @@ if FACTION_ID == 0:
 # ============================================================
 TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}"
 FFSCOUTER_URL = "https://ffscouter.com/api/v1/get-stats"
+
+# Enemy faction basic endpoint (roster + statuses)
+ENEMY_TORN_BASIC_URL = "https://api.torn.com/faction/{}"
 
 # ============================================================
 # Retal Window
@@ -54,11 +62,10 @@ last_wrong_channel_notice = {}  # {(channel_id, user_id): ts}
 
 # ============================================================
 # Discord Client
-# - We need message_content to read commands like !quiet on/off
 # ============================================================
 intents = discord.Intents.default()
 intents.guilds = True
-intents.message_content = True  # IMPORTANT for reading chat commands
+intents.message_content = True
 client = discord.Client(intents=intents)
 
 # ============================================================
@@ -112,14 +119,9 @@ def get_attack_timestamp(data: dict) -> int:
     return int(time.time())
 
 def format_respect_loss(value):
-    """
-    Torn's respect_loss is usually a float.
-    We format to 2dp, then strip trailing zeros/dot so it looks clean.
-    """
     if isinstance(value, (int, float)):
         return f"{value:.2f}".rstrip("0").rstrip(".")
     if isinstance(value, str):
-        # best effort for stringy numbers
         try:
             f = float(value)
             return f"{f:.2f}".rstrip("0").rstrip(".")
@@ -128,29 +130,67 @@ def format_respect_loss(value):
     return "Unknown"
 
 # ============================================================
+# Enemy travel times table (minutes)
+# Standard / Airstrip / Business
+# ============================================================
+TRAVEL_TIMES_MIN = {
+    "Mexico": {"standard": 26, "airstrip": 18, "business": 8},
+    "Cayman Islands": {"standard": 35, "airstrip": 25, "business": 11},
+    "Canada": {"standard": 41, "airstrip": 29, "business": 12},
+    "Hawaii": {"standard": 134, "airstrip": 94, "business": 40},
+    "United Kingdom": {"standard": 159, "airstrip": 111, "business": 48},
+    "Argentina": {"standard": 167, "airstrip": 117, "business": 50},
+    "Switzerland": {"standard": 175, "airstrip": 123, "business": 53},
+    "Japan": {"standard": 225, "airstrip": 158, "business": 68},
+    "China": {"standard": 242, "airstrip": 169, "business": 72},
+    "United Arab Emirates": {"standard": 271, "airstrip": 190, "business": 81},
+    "South Africa": {"standard": 297, "airstrip": 208, "business": 89},
+}
+
+DEST_ALIASES = {
+    "UAE": "United Arab Emirates",
+    "United Arab Emirates": "United Arab Emirates",
+    "UK": "United Kingdom",
+    "United Kingdom": "United Kingdom",
+}
+
+def mins_to_pretty(m: int) -> str:
+    if m < 60:
+        return f"{m}m"
+    h = m // 60
+    mm = m % 60
+    return f"{h}h {mm:02d}m"
+
+def extract_destination(desc: str) -> str | None:
+    if not desc:
+        return None
+    m = re.search(r"(?:Traveling to|Abroad in)\s+(.+)$", desc.strip())
+    return m.group(1).strip() if m else None
+
+def normalize_destination(dest: str | None) -> str | None:
+    if not dest:
+        return None
+    return DEST_ALIASES.get(dest, dest)
+
+def build_eta(now_utc: datetime, minutes: int) -> str:
+    eta = now_utc + timedelta(minutes=minutes)
+    return f"{mins_to_pretty(minutes)} (ETA <t:{int(eta.timestamp())}:t>)"
+
+# ============================================================
 # Discord command handler
-# Commands:
-#   !quiet on
-#   !quiet off
-#   !quiet status
-# (restricted to admins / manage_guild)
-# Deletes BOTH the command message + bot response after 5 mins
 # ============================================================
 @client.event
 async def on_message(message: discord.Message):
     global QUIET_MODE
 
-    # ignore bots (including ourselves)
     if message.author.bot:
         return
 
     content_raw = (message.content or "").strip()
     content = content_raw.lower()
 
-    # Only treat !quiet as a command (ignore everything else)
     is_quiet_command = content.startswith("!quiet")
 
-    # If someone tries !quiet in the wrong channel, warn them in that channel
     if is_quiet_command and message.channel.id != CHANNEL_ID:
         now = int(time.time())
         key = (message.channel.id, message.author.id)
@@ -164,14 +204,12 @@ async def on_message(message: discord.Message):
             )
         return
 
-    # Keep actual command handling scoped to your channel
     if message.channel.id != CHANNEL_ID:
         return
 
     if not is_quiet_command:
         return
 
-    # schedule deletion of the user's command after 5 mins (best effort)
     async def delete_command_later(msg: discord.Message):
         await asyncio.sleep(COMMAND_CLEANUP_SECONDS)
         try:
@@ -181,7 +219,6 @@ async def on_message(message: discord.Message):
 
     client.loop.create_task(delete_command_later(message))
 
-    # permission check: admin or manage_guild
     perms = getattr(message.author, "guild_permissions", None)
     if not perms or not (perms.administrator or perms.manage_guild):
         await message.channel.send(
@@ -220,12 +257,123 @@ async def on_message(message: discord.Message):
     )
 
 # ============================================================
+# Enemy Flight Tracking Loop
+# ============================================================
+enemy_last_state = {}  # {user_id: last_state_string}
+
+async def check_enemy_travel():
+    global QUIET_MODE
+    await client.wait_until_ready()
+
+    if ENEMY_FACTION_ID == 0:
+        print("ENEMY_FACTION_ID not set, skipping enemy travel tracking.")
+        return
+
+    channel = client.get_channel(CHANNEL_ID)
+    while channel is None:
+        print(f"Channel {CHANNEL_ID} not found yet, retrying in 5s...")
+        await asyncio.sleep(5)
+        channel = client.get_channel(CHANNEL_ID)
+
+    # Prime cache so we don't spam takeoffs on startup
+    try:
+        resp = requests.get(
+            ENEMY_TORN_BASIC_URL.format(ENEMY_FACTION_ID),
+            params={"selections": "basic", "key": TORN_API_KEY},
+            timeout=10
+        ).json()
+
+        for uid, m in (resp.get("members") or {}).items():
+            st = (m.get("status") or {})
+            enemy_last_state[int(uid)] = st.get("state") or st.get("status")
+    except Exception as e:
+        print(f"Error priming enemy travel cache: {e}")
+
+    while not client.is_closed():
+        try:
+            resp = requests.get(
+                ENEMY_TORN_BASIC_URL.format(ENEMY_FACTION_ID),
+                params={"selections": "basic", "key": TORN_API_KEY},
+                timeout=10
+            ).json()
+
+            members = resp.get("members") or {}
+            now_utc = datetime.now(timezone.utc)
+
+            for uid_str, m in members.items():
+                uid = int(uid_str)
+                st = (m.get("status") or {})
+                state = st.get("state") or st.get("status")
+                desc = st.get("description", "")
+                prev = enemy_last_state.get(uid)
+
+                enemy_last_state[uid] = state
+
+                # Trigger on takeoff only
+                if prev in (None, "Okay", "Ok") and state == "Traveling":
+                    name = m.get("name", f"User {uid}")
+                    dest = normalize_destination(extract_destination(desc)) or "Unknown"
+                    times = TRAVEL_TIMES_MIN.get(dest)
+
+                    if not times:
+                        msg = (
+                            f✈️ **Enemy takeoff!**\n"
+                            f"**{name}** [{uid}] → **{dest}**\n"
+                            f"_(No travel time data for this destination yet)_"
+                        )
+                        delete_after = 6 * 60 * 60
+
+                        if QUIET_MODE:
+                            await channel.send(
+                                msg,
+                                allowed_mentions=discord.AllowedMentions.none(),
+                                delete_after=delete_after
+                            )
+                        else:
+                            await channel.send(
+                                f"@here\n{msg}",
+                                allowed_mentions=discord.AllowedMentions(everyone=True),
+                                delete_after=delete_after
+                            )
+                        continue
+
+                    msg = (
+                        f"✈️ **Enemy takeoff!**\n"
+                        f"**{name}** [{uid}] → **{dest}**\n"
+                        f"Standard: {build_eta(now_utc, times['standard'])}\n"
+                        f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
+                        f"Business: {build_eta(now_utc, times['business'])}"
+                    )
+
+                    # Delete when they've definitely landed: standard (longest) + 2 min buffer
+                    delete_after = (times["standard"] * 60) + 120
+
+                    if QUIET_MODE:
+                        await channel.send(
+                            msg,
+                            allowed_mentions=discord.AllowedMentions.none(),
+                            delete_after=delete_after
+                        )
+                    else:
+                        await channel.send(
+                            f"@here\n{msg}",
+                            allowed_mentions=discord.AllowedMentions(everyone=True),
+                            delete_after=delete_after
+                        )
+
+        except Exception as e:
+            print(f"Error fetching enemy travel: {e}")
+
+        await asyncio.sleep(60)
+
+# ============================================================
 # Bot Startup
 # ============================================================
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user}")
     client.loop.create_task(check_attacks())
+    client.loop.create_task(check_enemy_travel())
 
 # ============================================================
 # Main Polling Loop
@@ -259,20 +407,16 @@ async def check_attacks():
                     continue
                 seen_attacks.add(attack_id)
 
-                # Ignore attacks launched by our own faction
                 if data.get("attacker_faction") == FACTION_ID:
                     continue
 
                 attacker = data.get("attacker_name", "Someone")
                 defender = data.get("defender_name", "Unknown")
 
-                # ✅ FIX: respect loss is in respect_loss
                 respect_loss_raw = data.get("respect_loss", None)
                 respect_loss = format_respect_loss(respect_loss_raw)
 
                 result = data.get("result", "Attacked")
-
-                # Ignore non-retalable outcomes
                 result_norm = str(result).strip().lower()
                 if result_norm in ("lost", "stalemate", "interrupted"):
                     continue
@@ -299,7 +443,6 @@ async def check_attacks():
                     + (f"🔗 {attacker_link}" if attacker_link else "🔗 *(Stealthed attacker — no profile link)*")
                 )
 
-                # QUIET MODE: no @here, and block mention pings completely
                 if QUIET_MODE:
                     await channel.send(
                         message,
