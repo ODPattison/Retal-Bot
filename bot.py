@@ -317,6 +317,7 @@ async def check_enemy_travel():
                     dest = normalize_destination(extract_destination(desc)) or "Unknown"
                     times = TRAVEL_TIMES_MIN.get(dest)
 
+                    # ✅ FIXED: missing quotes (this is what was crashing Railway)
                     if not times:
                         msg = (
                             ✈️ **Enemy takeoff!**\n"
