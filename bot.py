@@ -10,8 +10,9 @@ from datetime import datetime, timedelta, timezone
 
 # ============================================================
 # Retal Bot
-# Version: 🔧 v1.5.1
-# Change: Added enemy flight takeoff tracking with @here logic + auto delete on landing (std + buffer)
+# Version: 🔧 v1.5.2
+# Change: Added enemy return flight detection:
+#         "In XXX" -> "Returning to Torn from XXX"
 # ============================================================
 
 # ============================================================
@@ -24,10 +25,9 @@ FFSCOUTER_KEY = os.getenv("FFSCOUTER_KEY")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 FACTION_ID = int(os.getenv("FACTION_ID", "0"))
 
-# NEW: Enemy faction to track (set per war)
+# Enemy faction to track (set per war)
 ENEMY_FACTION_ID = int(os.getenv("ENEMY_FACTION_ID", "0"))
 
-# Optional: crash early if config missing (recommended)
 if not DISCORD_TOKEN:
     raise ValueError("Missing DISCORD_TOKEN env var")
 
@@ -43,7 +43,6 @@ if FACTION_ID == 0:
 TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}"
 FFSCOUTER_URL = "https://ffscouter.com/api/v1/get-stats"
 
-# Enemy faction basic endpoint (roster + statuses)
 ENEMY_TORN_BASIC_URL = "https://api.torn.com/faction/{}"
 
 # ============================================================
@@ -52,15 +51,15 @@ ENEMY_TORN_BASIC_URL = "https://api.torn.com/faction/{}"
 RETAL_WINDOW_SECONDS = 5 * 60
 
 # ============================================================
-# Command cleanup window (delete command + response)
+# Command cleanup window
 # ============================================================
-COMMAND_CLEANUP_SECONDS = 5 * 60  # 5 minutes
+COMMAND_CLEANUP_SECONDS = 5 * 60
 
 # ============================================================
-# Wrong channel command warning (anti spam)
+# Wrong channel command warning
 # ============================================================
-WRONG_CHANNEL_COOLDOWN = 30  # seconds
-last_wrong_channel_notice = {}  # {(channel_id, user_id): ts}
+WRONG_CHANNEL_COOLDOWN = 30
+last_wrong_channel_notice = {}
 
 # ============================================================
 # Discord Client
@@ -74,15 +73,13 @@ client = discord.Client(intents=intents)
 # Runtime State
 # ============================================================
 seen_attacks = set()
-
-# Quiet mode (in-memory)
 QUIET_MODE = False
 
 # ============================================================
 # FFScouter Cache
 # ============================================================
-stat_cache = {}          # {player_id: {"value": "2.99b", "ts": unix}}
-CACHE_TTL = 10 * 60      # 10 minutes
+stat_cache = {}
+CACHE_TTL = 10 * 60
 
 def get_bs_estimate(player_id: int):
     if not FFSCOUTER_KEY or not player_id:
@@ -133,7 +130,6 @@ def format_respect_loss(value):
 
 # ============================================================
 # Enemy travel times table (minutes)
-# Standard / Airstrip / Business
 # ============================================================
 TRAVEL_TIMES_MIN = {
     "Mexico": {"standard": 26, "airstrip": 18, "business": 8},
@@ -163,13 +159,19 @@ def mins_to_pretty(m: int) -> str:
     mm = m % 60
     return f"{h}h {mm:02d}m"
 
-def extract_destination(desc: str) -> str | None:
+def extract_destination(desc: str):
     if not desc:
         return None
     m = re.search(r"(?:Traveling to|Abroad in)\s+(.+)$", desc.strip())
     return m.group(1).strip() if m else None
 
-def normalize_destination(dest: str | None) -> str | None:
+def extract_return_from(desc: str):
+    if not desc:
+        return None
+    m = re.search(r"(?:Returning to Torn from)\s+(.+)$", desc.strip())
+    return m.group(1).strip() if m else None
+
+def normalize_destination(dest):
     if not dest:
         return None
     return DEST_ALIASES.get(dest, dest)
@@ -177,6 +179,21 @@ def normalize_destination(dest: str | None) -> str | None:
 def build_eta(now_utc: datetime, minutes: int) -> str:
     eta = now_utc + timedelta(minutes=minutes)
     return f"{mins_to_pretty(minutes)} (ETA <t:{int(eta.timestamp())}:t>)"
+
+async def send_with_quiet_logic(channel, text: str, delete_after: int):
+    global QUIET_MODE
+    if QUIET_MODE:
+        await channel.send(
+            text,
+            allowed_mentions=discord.AllowedMentions.none(),
+            delete_after=delete_after
+        )
+    else:
+        await channel.send(
+            f"@here\n{text}",
+            allowed_mentions=discord.AllowedMentions(everyone=True),
+            delete_after=delete_after
+        )
 
 # ============================================================
 # Discord command handler
@@ -190,7 +207,6 @@ async def on_message(message: discord.Message):
 
     content_raw = (message.content or "").strip()
     content = content_raw.lower()
-
     is_quiet_command = content.startswith("!quiet")
 
     if is_quiet_command and message.channel.id != CHANNEL_ID:
@@ -240,7 +256,7 @@ async def on_message(message: discord.Message):
     if parts[1] in ("on", "true", "1", "enable", "enabled"):
         QUIET_MODE = True
         await message.channel.send(
-            "😡Fine I'll be quiet. Quiet mode **ON** — no more `@here` pings. Dick",
+            "😡Fine I'll be quiet. Quiet mode **ON** no more @here pings.",
             delete_after=COMMAND_CLEANUP_SECONDS
         )
         return
@@ -248,7 +264,7 @@ async def on_message(message: discord.Message):
     if parts[1] in ("off", "false", "0", "disable", "disabled"):
         QUIET_MODE = False
         await message.channel.send(
-            "😘Awh you missed me. Quiet mode **OFF** — `@here` pings are back. ^.^ ",
+            "😘Quiet mode **OFF** @here pings are back.",
             delete_after=COMMAND_CLEANUP_SECONDS
         )
         return
@@ -259,12 +275,12 @@ async def on_message(message: discord.Message):
     )
 
 # ============================================================
-# Enemy Flight Tracking Loop
+# Enemy Flight Tracking
 # ============================================================
-enemy_last_state = {}  # {user_id: last_state_string}
+enemy_last_state = {}
+enemy_last_desc = {}
 
 async def check_enemy_travel():
-    global QUIET_MODE
     await client.wait_until_ready()
 
     if ENEMY_FACTION_ID == 0:
@@ -277,7 +293,7 @@ async def check_enemy_travel():
         await asyncio.sleep(5)
         channel = client.get_channel(CHANNEL_ID)
 
-    # Prime cache so we don't spam takeoffs on startup
+    # Prime cache so we do not spam on startup
     try:
         resp = requests.get(
             ENEMY_TORN_BASIC_URL.format(ENEMY_FACTION_ID),
@@ -287,7 +303,9 @@ async def check_enemy_travel():
 
         for uid, m in (resp.get("members") or {}).items():
             st = (m.get("status") or {})
-            enemy_last_state[int(uid)] = st.get("state") or st.get("status")
+            uid_int = int(uid)
+            enemy_last_state[uid_int] = st.get("state") or st.get("status")
+            enemy_last_desc[uid_int] = st.get("description", "") or ""
     except Exception as e:
         print(f"Error priming enemy travel cache: {e}")
 
@@ -306,38 +324,59 @@ async def check_enemy_travel():
                 uid = int(uid_str)
                 st = (m.get("status") or {})
                 state = st.get("state") or st.get("status")
-                desc = st.get("description", "")
-                prev = enemy_last_state.get(uid)
+                desc = st.get("description", "") or ""
+
+                prev_state = enemy_last_state.get(uid)
+                prev_desc = enemy_last_desc.get(uid, "")
 
                 enemy_last_state[uid] = state
+                enemy_last_desc[uid] = desc
 
-                # Trigger on takeoff only
-                if prev in (None, "Okay", "Ok") and state == "Traveling":
-                    name = m.get("name", f"User {uid}")
+                name = m.get("name", f"User {uid}")
+
+                # ==========================================
+                # RETURNING HOME
+                # In XXX -> Returning to Torn from XXX
+                # ==========================================
+                if prev_desc.startswith("In ") and desc.startswith("Returning to Torn from"):
+                    from_place = normalize_destination(extract_return_from(desc)) or "Unknown"
+                    times = TRAVEL_TIMES_MIN.get(from_place)
+
+                    if not times:
+                        msg = (
+                            "🛬 **Enemy returning home!**\n"
+                            f"**{name}** [{uid}] ← **{from_place}**\n"
+                            "_(No travel time data for this destination yet)_"
+                        )
+                        await send_with_quiet_logic(channel, msg, delete_after=6 * 60 * 60)
+                        continue
+
+                    msg = (
+                        "🛬 **Enemy returning home!**\n"
+                        f"**{name}** [{uid}] ← **{from_place}**\n"
+                        f"Standard: {build_eta(now_utc, times['standard'])}\n"
+                        f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
+                        f"Business: {build_eta(now_utc, times['business'])}"
+                    )
+                    delete_after = (times["standard"] * 60) + 120
+                    await send_with_quiet_logic(channel, msg, delete_after=delete_after)
+                    continue
+
+                # ==========================================
+                # OUTBOUND TAKEOFF
+                # Okay/Ok -> Traveling
+                # ==========================================
+                if prev_state in (None, "Okay", "Ok") and state == "Traveling":
                     dest = normalize_destination(extract_destination(desc)) or "Unknown"
                     times = TRAVEL_TIMES_MIN.get(dest)
 
-                    # ✅ FIXED: missing quotes (this is what was crashing Railway)
                     if not times:
                         msg = (
                             "✈️ **Enemy takeoff!**\n"
                             f"**{name}** [{uid}] → **{dest}**\n"
                             "_(No travel time data for this destination yet)_"
                         )
-                        delete_after = 6 * 60 * 60
-
-                        if QUIET_MODE:
-                            await channel.send(
-                                msg,
-                                allowed_mentions=discord.AllowedMentions.none(),
-                                delete_after=delete_after
-                            )
-                        else:
-                            await channel.send(
-                                f"@here\n{msg}",
-                                allowed_mentions=discord.AllowedMentions(everyone=True),
-                                delete_after=delete_after
-                            )
+                        await send_with_quiet_logic(channel, msg, delete_after=6 * 60 * 60)
                         continue
 
                     msg = (
@@ -347,22 +386,8 @@ async def check_enemy_travel():
                         f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
                         f"Business: {build_eta(now_utc, times['business'])}"
                     )
-
-                    # Delete when they've definitely landed: standard (longest) + 2 min buffer
                     delete_after = (times["standard"] * 60) + 120
-
-                    if QUIET_MODE:
-                        await channel.send(
-                            msg,
-                            allowed_mentions=discord.AllowedMentions.none(),
-                            delete_after=delete_after
-                        )
-                    else:
-                        await channel.send(
-                            f"@here\n{msg}",
-                            allowed_mentions=discord.AllowedMentions(everyone=True),
-                            delete_after=delete_after
-                        )
+                    await send_with_quiet_logic(channel, msg, delete_after=delete_after)
 
         except Exception as e:
             print(f"Error fetching enemy travel: {e}")
@@ -379,10 +404,9 @@ async def on_ready():
     client.loop.create_task(check_enemy_travel())
 
 # ============================================================
-# Main Polling Loop
+# Retal polling
 # ============================================================
 async def check_attacks():
-    global QUIET_MODE
     await client.wait_until_ready()
 
     channel = client.get_channel(CHANNEL_ID)
@@ -391,7 +415,6 @@ async def check_attacks():
         await asyncio.sleep(5)
         channel = client.get_channel(CHANNEL_ID)
 
-    # On boot: mark current attacks as "already seen"
     try:
         response = requests.get(TORN_URL, timeout=10).json()
         for attack_id in response.get("attacks", {}).keys():
