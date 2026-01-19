@@ -10,9 +10,8 @@ from datetime import datetime, timedelta, timezone
 
 # ============================================================
 # Retal Bot
-# Version: 🔧 v1.5.2
-# Change: Added enemy return flight detection:
-#         "In XXX" -> "Returning to Torn from XXX"
+# Version: 🔧 v1.5.3
+# Change: Added BS estimate + profile link to enemy travel alerts (takeoff + return)
 # ============================================================
 
 # ============================================================
@@ -42,7 +41,6 @@ if FACTION_ID == 0:
 # ============================================================
 TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}"
 FFSCOUTER_URL = "https://ffscouter.com/api/v1/get-stats"
-
 ENEMY_TORN_BASIC_URL = "https://api.torn.com/faction/{}"
 
 # ============================================================
@@ -334,6 +332,11 @@ async def check_enemy_travel():
 
                 name = m.get("name", f"User {uid}")
 
+                profile_link = f"https://www.torn.com/profiles.php?XID={uid}"
+                bs_est = get_bs_estimate(uid)
+                bs_line = f"📊 **Est. Battle Stats:** {bs_est}\n" if bs_est else ""
+                profile_line = f"🔗 {profile_link}"
+
                 # ==========================================
                 # RETURNING HOME
                 # In XXX -> Returning to Torn from XXX
@@ -344,19 +347,23 @@ async def check_enemy_travel():
 
                     if not times:
                         msg = (
-                            "🛬 **Enemy returning home!**\n"
+                            "🛬 **Enemy returning to Torn!**\n"
                             f"**{name}** [{uid}] ← **{from_place}**\n"
+                            + bs_line
+                            + profile_line + "\n"
                             "_(No travel time data for this destination yet)_"
                         )
                         await send_with_quiet_logic(channel, msg, delete_after=6 * 60 * 60)
                         continue
 
                     msg = (
-                        "🛬 **Enemy returning home!**\n"
+                        "🛬 **Enemy returning to Torn!**\n"
                         f"**{name}** [{uid}] ← **{from_place}**\n"
                         f"Standard: {build_eta(now_utc, times['standard'])}\n"
                         f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
-                        f"Business: {build_eta(now_utc, times['business'])}"
+                        f"Business: {build_eta(now_utc, times['business'])}\n"
+                        + bs_line
+                        + profile_line
                     )
                     delete_after = (times["standard"] * 60) + 120
                     await send_with_quiet_logic(channel, msg, delete_after=delete_after)
@@ -372,19 +379,23 @@ async def check_enemy_travel():
 
                     if not times:
                         msg = (
-                            "✈️ **Enemy takeoff!**\n"
+                            "🛫 **Enemy Running Away!**\n"
                             f"**{name}** [{uid}] → **{dest}**\n"
+                            + bs_line
+                            + profile_line + "\n"
                             "_(No travel time data for this destination yet)_"
                         )
                         await send_with_quiet_logic(channel, msg, delete_after=6 * 60 * 60)
                         continue
 
                     msg = (
-                        "✈️ **Enemy takeoff!**\n"
+                        "🛫 **Enemy Running Away!**\n"
                         f"**{name}** [{uid}] → **{dest}**\n"
                         f"Standard: {build_eta(now_utc, times['standard'])}\n"
                         f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
-                        f"Business: {build_eta(now_utc, times['business'])}"
+                        f"Business: {build_eta(now_utc, times['business'])}\n"
+                        + bs_line
+                        + profile_line
                     )
                     delete_after = (times["standard"] * 60) + 120
                     await send_with_quiet_logic(channel, msg, delete_after=delete_after)
