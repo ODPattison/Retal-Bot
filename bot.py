@@ -312,7 +312,7 @@ async def check_enemy_travel():
                         msg = (
                             f"🛬 **{name}** — Returning to Torn from **{from_place}**\n"
                             + bs_line
-                            "_(No travel time data for this destination yet)_"
+                            + "_(No travel time data for this destination yet)_"
                         )
                         await send_with_quiet_logic(channel, msg, delete_after=6 * 60 * 60)
                         continue
@@ -337,7 +337,7 @@ async def check_enemy_travel():
                         msg = (
                             f"🛫 **{name}** — Travelling to **{dest}**\n"
                             + bs_line
-                            "_(No travel time data for this destination yet)_"
+                            + "_(No travel time data for this destination yet)_"
                         )
                         await send_with_quiet_logic(channel, msg, delete_after=6 * 60 * 60)
                         continue
