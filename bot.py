@@ -10,72 +10,45 @@ from datetime import datetime, timedelta, timezone
 
 # ============================================================
 # Retal Bot
-# Version: 🔧 v1.5.3
-# Change: Added BS estimate + profile link to enemy travel alerts (takeoff + return)
+# Version: 🔧 v1.5.5
+# Change: Neaten enemy travel alerts:
+#         - Remove header line
+#         - Put "Travelling to..." / "Returning to..." on same line as clickable name
 # ============================================================
 
-# ============================================================
-# CONFIG: Secrets + IDs
-# ============================================================
 DISCORD_TOKEN = (os.getenv("DISCORD_TOKEN") or "").strip().strip('"')
 TORN_API_KEY = os.getenv("TORN_API_KEY")
 FFSCOUTER_KEY = os.getenv("FFSCOUTER_KEY")
 
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 FACTION_ID = int(os.getenv("FACTION_ID", "0"))
-
-# Enemy faction to track (set per war)
 ENEMY_FACTION_ID = int(os.getenv("ENEMY_FACTION_ID", "0"))
 
 if not DISCORD_TOKEN:
     raise ValueError("Missing DISCORD_TOKEN env var")
-
 if CHANNEL_ID == 0:
     raise ValueError("Missing or invalid CHANNEL_ID env var")
-
 if FACTION_ID == 0:
     raise ValueError("Missing or invalid FACTION_ID env var")
 
-# ============================================================
-# API Endpoints
-# ============================================================
 TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}"
 FFSCOUTER_URL = "https://ffscouter.com/api/v1/get-stats"
 ENEMY_TORN_BASIC_URL = "https://api.torn.com/faction/{}"
 
-# ============================================================
-# Retal Window
-# ============================================================
 RETAL_WINDOW_SECONDS = 5 * 60
-
-# ============================================================
-# Command cleanup window
-# ============================================================
 COMMAND_CLEANUP_SECONDS = 5 * 60
 
-# ============================================================
-# Wrong channel command warning
-# ============================================================
 WRONG_CHANNEL_COOLDOWN = 30
 last_wrong_channel_notice = {}
 
-# ============================================================
-# Discord Client
-# ============================================================
 intents = discord.Intents.default()
 intents.guilds = True
 intents.message_content = True
 client = discord.Client(intents=intents)
 
-# ============================================================
-# Runtime State
-# ============================================================
 seen_attacks = set()
 QUIET_MODE = False
 
-# ============================================================
-# FFScouter Cache
-# ============================================================
 stat_cache = {}
 CACHE_TTL = 10 * 60
 
@@ -126,9 +99,6 @@ def format_respect_loss(value):
             return value
     return "Unknown"
 
-# ============================================================
-# Enemy travel times table (minutes)
-# ============================================================
 TRAVEL_TIMES_MIN = {
     "Mexico": {"standard": 26, "airstrip": 18, "business": 8},
     "Cayman Islands": {"standard": 35, "airstrip": 25, "business": 11},
@@ -193,9 +163,6 @@ async def send_with_quiet_logic(channel, text: str, delete_after: int):
             delete_after=delete_after
         )
 
-# ============================================================
-# Discord command handler
-# ============================================================
 @client.event
 async def on_message(message: discord.Message):
     global QUIET_MODE
@@ -291,7 +258,6 @@ async def check_enemy_travel():
         await asyncio.sleep(5)
         channel = client.get_channel(CHANNEL_ID)
 
-    # Prime cache so we do not spam on startup
     try:
         resp = requests.get(
             ENEMY_TORN_BASIC_URL.format(ENEMY_FACTION_ID),
@@ -330,72 +296,58 @@ async def check_enemy_travel():
                 enemy_last_state[uid] = state
                 enemy_last_desc[uid] = desc
 
-                name = m.get("name", f"User {uid}")
-
+                raw_name = m.get("name", f"User {uid}")
                 profile_link = f"https://www.torn.com/profiles.php?XID={uid}"
+                name = f"[{raw_name}]({profile_link})"
+
                 bs_est = get_bs_estimate(uid)
                 bs_line = f"📊 **Est. Battle Stats:** {bs_est}\n" if bs_est else ""
-                profile_line = f"🔗 {profile_link}"
 
-                # ==========================================
-                # RETURNING HOME
-                # In XXX -> Returning to Torn from XXX
-                # ==========================================
+                # RETURNING HOME: In XXX -> Returning to Torn from XXX
                 if prev_desc.startswith("In ") and desc.startswith("Returning to Torn from"):
                     from_place = normalize_destination(extract_return_from(desc)) or "Unknown"
                     times = TRAVEL_TIMES_MIN.get(from_place)
 
                     if not times:
                         msg = (
-                            "🛬 **Enemy returning to Torn!**\n"
-                            f"**{name}** [{uid}] ← **{from_place}**\n"
+                            f"🛬 **{name}** — Returning to Torn from **{from_place}**\n"
                             + bs_line
-                            + profile_line + "\n"
                             "_(No travel time data for this destination yet)_"
                         )
                         await send_with_quiet_logic(channel, msg, delete_after=6 * 60 * 60)
                         continue
 
                     msg = (
-                        "🛬 **Enemy returning to Torn!**\n"
-                        f"**{name}** [{uid}] ← **{from_place}**\n"
+                        f"🛬 **{name}** — Returning to Torn from **{from_place}**\n"
                         f"Standard: {build_eta(now_utc, times['standard'])}\n"
                         f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
                         f"Business: {build_eta(now_utc, times['business'])}\n"
                         + bs_line
-                        + profile_line
                     )
                     delete_after = (times["standard"] * 60) + 120
                     await send_with_quiet_logic(channel, msg, delete_after=delete_after)
                     continue
 
-                # ==========================================
-                # OUTBOUND TAKEOFF
-                # Okay/Ok -> Traveling
-                # ==========================================
+                # OUTBOUND TAKEOFF: Okay/Ok -> Traveling
                 if prev_state in (None, "Okay", "Ok") and state == "Traveling":
                     dest = normalize_destination(extract_destination(desc)) or "Unknown"
                     times = TRAVEL_TIMES_MIN.get(dest)
 
                     if not times:
                         msg = (
-                            "🛫 **Enemy Running Away!**\n"
-                            f"**{name}** [{uid}] → **{dest}**\n"
+                            f"🛫 **{name}** — Travelling to **{dest}**\n"
                             + bs_line
-                            + profile_line + "\n"
                             "_(No travel time data for this destination yet)_"
                         )
                         await send_with_quiet_logic(channel, msg, delete_after=6 * 60 * 60)
                         continue
 
                     msg = (
-                        "🛫 **Enemy Running Away!**\n"
-                        f"**{name}** [{uid}] → **{dest}**\n"
+                        f"🛫 **{name}** — Travelling to **{dest}**\n"
                         f"Standard: {build_eta(now_utc, times['standard'])}\n"
                         f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
                         f"Business: {build_eta(now_utc, times['business'])}\n"
                         + bs_line
-                        + profile_line
                     )
                     delete_after = (times["standard"] * 60) + 120
                     await send_with_quiet_logic(channel, msg, delete_after=delete_after)
@@ -405,18 +357,12 @@ async def check_enemy_travel():
 
         await asyncio.sleep(60)
 
-# ============================================================
-# Bot Startup
-# ============================================================
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user}")
     client.loop.create_task(check_attacks())
     client.loop.create_task(check_enemy_travel())
 
-# ============================================================
-# Retal polling
-# ============================================================
 async def check_attacks():
     await client.wait_until_ready()
 
@@ -498,7 +444,4 @@ async def check_attacks():
 
         await asyncio.sleep(60)
 
-# ============================================================
-# Run the bot
-# ============================================================
 client.run(DISCORD_TOKEN)
