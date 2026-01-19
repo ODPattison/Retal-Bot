@@ -319,10 +319,10 @@ async def check_enemy_travel():
 
                     msg = (
                         f"🛬 **{name}** — Returning to Torn from **{from_place}**\n"
+                        + bs_line
                         f"Standard: {build_eta(now_utc, times['standard'])}\n"
                         f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
                         f"Business: {build_eta(now_utc, times['business'])}\n"
-                        + bs_line
                     )
                     delete_after = (times["standard"] * 60) + 120
                     await send_with_quiet_logic(channel, msg, delete_after=delete_after)
@@ -344,10 +344,10 @@ async def check_enemy_travel():
 
                     msg = (
                         f"🛫 **{name}** — Travelling to **{dest}**\n"
+                        + bs_line
                         f"Standard: {build_eta(now_utc, times['standard'])}\n"
                         f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
                         f"Business: {build_eta(now_utc, times['business'])}\n"
-                        + bs_line
                     )
                     delete_after = (times["standard"] * 60) + 120
                     await send_with_quiet_logic(channel, msg, delete_after=delete_after)
