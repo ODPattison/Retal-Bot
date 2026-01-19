@@ -339,7 +339,7 @@ async def check_enemy_travel():
 
                     if not times:
                         msg = (
-                            f"🛬 **{name}** — Returning to Torn from **{from_place}**\n"
+                            f"🛬 **{name}** — Returning from **{from_place}**\n"
                             + bs_line
                             + "_(No travel time data for this destination yet)_"
                         )
@@ -347,7 +347,7 @@ async def check_enemy_travel():
                         continue
 
                     msg = (
-                        f"🛬 **{name}** — Returning to Torn from **{from_place}**\n"
+                        f"🛬 **{name}** — Returning from **{from_place}**\n"
                         + bs_line
                         + f"Standard: {build_eta(now_utc, times['standard'])}\n"
                         + f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
