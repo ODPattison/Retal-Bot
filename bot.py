@@ -10,12 +10,16 @@ from datetime import datetime, timedelta, timezone
 
 # ============================================================
 # Retal Bot
-# Version: 🔧 v1.5.5
-# Change: Neaten enemy travel alerts:
-#         - Remove header line
-#         - Put "Travelling to..." / "Returning to..." on same line as clickable name
+# Version: 🔧 v1.5.6
+# Change: Fix syntax + tidy enemy travel alerts:
+#         - Name is clickable
+#         - Travel text on same line as name
+#         - BS estimate shown under the name line
 # ============================================================
 
+# ============================================================
+# CONFIG: Secrets + IDs
+# ============================================================
 DISCORD_TOKEN = (os.getenv("DISCORD_TOKEN") or "").strip().strip('"')
 TORN_API_KEY = os.getenv("TORN_API_KEY")
 FFSCOUTER_KEY = os.getenv("FFSCOUTER_KEY")
@@ -31,27 +35,45 @@ if CHANNEL_ID == 0:
 if FACTION_ID == 0:
     raise ValueError("Missing or invalid FACTION_ID env var")
 
+# ============================================================
+# API Endpoints
+# ============================================================
 TORN_URL = f"https://api.torn.com/faction/?selections=attacks&key={TORN_API_KEY}"
 FFSCOUTER_URL = "https://ffscouter.com/api/v1/get-stats"
 ENEMY_TORN_BASIC_URL = "https://api.torn.com/faction/{}"
 
+# ============================================================
+# Retal Window + Command Cleanup
+# ============================================================
 RETAL_WINDOW_SECONDS = 5 * 60
 COMMAND_CLEANUP_SECONDS = 5 * 60
 
+# ============================================================
+# Wrong channel command warning
+# ============================================================
 WRONG_CHANNEL_COOLDOWN = 30
 last_wrong_channel_notice = {}
 
+# ============================================================
+# Discord Client
+# ============================================================
 intents = discord.Intents.default()
 intents.guilds = True
 intents.message_content = True
 client = discord.Client(intents=intents)
 
+# ============================================================
+# Runtime State + Caches
+# ============================================================
 seen_attacks = set()
 QUIET_MODE = False
 
 stat_cache = {}
 CACHE_TTL = 10 * 60
 
+# ============================================================
+# Helpers
+# ============================================================
 def get_bs_estimate(player_id: int):
     if not FFSCOUTER_KEY or not player_id:
         return None
@@ -99,6 +121,10 @@ def format_respect_loss(value):
             return value
     return "Unknown"
 
+# ============================================================
+# Enemy travel times table (minutes)
+# Standard / Airstrip / Business
+# ============================================================
 TRAVEL_TIMES_MIN = {
     "Mexico": {"standard": 26, "airstrip": 18, "business": 8},
     "Cayman Islands": {"standard": 35, "airstrip": 25, "business": 11},
@@ -163,6 +189,9 @@ async def send_with_quiet_logic(channel, text: str, delete_after: int):
             delete_after=delete_after
         )
 
+# ============================================================
+# Discord Command Handler
+# ============================================================
 @client.event
 async def on_message(message: discord.Message):
     global QUIET_MODE
@@ -320,9 +349,9 @@ async def check_enemy_travel():
                     msg = (
                         f"🛬 **{name}** — Returning to Torn from **{from_place}**\n"
                         + bs_line
-                        f"Standard: {build_eta(now_utc, times['standard'])}\n"
-                        f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
-                        f"Business: {build_eta(now_utc, times['business'])}\n"
+                        + f"Standard: {build_eta(now_utc, times['standard'])}\n"
+                        + f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
+                        + f"Business: {build_eta(now_utc, times['business'])}\n"
                     )
                     delete_after = (times["standard"] * 60) + 120
                     await send_with_quiet_logic(channel, msg, delete_after=delete_after)
@@ -345,9 +374,9 @@ async def check_enemy_travel():
                     msg = (
                         f"🛫 **{name}** — Travelling to **{dest}**\n"
                         + bs_line
-                        f"Standard: {build_eta(now_utc, times['standard'])}\n"
-                        f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
-                        f"Business: {build_eta(now_utc, times['business'])}\n"
+                        + f"Standard: {build_eta(now_utc, times['standard'])}\n"
+                        + f"Airstrip: {build_eta(now_utc, times['airstrip'])}\n"
+                        + f"Business: {build_eta(now_utc, times['business'])}\n"
                     )
                     delete_after = (times["standard"] * 60) + 120
                     await send_with_quiet_logic(channel, msg, delete_after=delete_after)
@@ -357,12 +386,18 @@ async def check_enemy_travel():
 
         await asyncio.sleep(60)
 
+# ============================================================
+# Bot Startup
+# ============================================================
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user}")
     client.loop.create_task(check_attacks())
     client.loop.create_task(check_enemy_travel())
 
+# ============================================================
+# Retal Polling
+# ============================================================
 async def check_attacks():
     await client.wait_until_ready()
 
@@ -444,4 +479,7 @@ async def check_attacks():
 
         await asyncio.sleep(60)
 
+# ============================================================
+# Run the bot
+# ============================================================
 client.run(DISCORD_TOKEN)
