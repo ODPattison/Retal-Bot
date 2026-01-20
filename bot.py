@@ -8,10 +8,13 @@ import time
 import re
 from datetime import datetime, timedelta, timezone
 
+from discord import app_commands
+from discord.ext import commands
+
 # ============================================================
-# Retal Bot
-# Version: 🔧 v1.5.7
-# Change: Retal alerts - attacker name is clickable hyperlink (no link at bottom)
+# Tempest
+# Version: 🔧 v1.6.0
+# Change: Slash commands (/quiet) instead of !quiet
 # ============================================================
 
 # ============================================================
@@ -40,24 +43,18 @@ FFSCOUTER_URL = "https://ffscouter.com/api/v1/get-stats"
 ENEMY_TORN_BASIC_URL = "https://api.torn.com/faction/{}"
 
 # ============================================================
-# Retal Window + Command Cleanup
+# Retal Window
 # ============================================================
 RETAL_WINDOW_SECONDS = 5 * 60
-COMMAND_CLEANUP_SECONDS = 5 * 60
 
 # ============================================================
-# Wrong channel command warning
-# ============================================================
-WRONG_CHANNEL_COOLDOWN = 30
-last_wrong_channel_notice = {}
-
-# ============================================================
-# Discord Client
+# Discord Bot
 # ============================================================
 intents = discord.Intents.default()
 intents.guilds = True
-intents.message_content = True
-client = discord.Client(intents=intents)
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree
 
 # ============================================================
 # Runtime State + Caches
@@ -187,82 +184,63 @@ async def send_with_quiet_logic(channel, text: str, delete_after: int):
         )
 
 # ============================================================
-# Discord Command Handler
+# Slash Command: /quiet
+# Posts normally + deletes after 5 mins
 # ============================================================
-@client.event
-async def on_message(message: discord.Message):
+DELETE_AFTER = 5 * 60  # 5 minutes
+
+def is_admin(member: discord.Member) -> bool:
+    perms = member.guild_permissions
+    return perms.administrator or perms.manage_guild
+
+@tree.command(name="quiet", description="Toggle @here pings on/off (admins only).")
+@app_commands.describe(mode="on/off/status")
+@app_commands.choices(mode=[
+    app_commands.Choice(name="on", value="on"),
+    app_commands.Choice(name="off", value="off"),
+    app_commands.Choice(name="status", value="status"),
+])
+async def quiet(interaction: discord.Interaction, mode: app_commands.Choice[str]):
     global QUIET_MODE
 
-    if message.author.bot:
+    # Wrong channel
+    if interaction.channel_id != CHANNEL_ID:
+        await interaction.response.send_message(
+            f"Hey {interaction.user.mention} you fucking idiot, commands go in <#{CHANNEL_ID}>... MORON 🙄",
+            delete_after=DELETE_AFTER
+        )
         return
 
-    content_raw = (message.content or "").strip()
-    content = content_raw.lower()
-    is_quiet_command = content.startswith("!quiet")
-
-    if is_quiet_command and message.channel.id != CHANNEL_ID:
-        now = int(time.time())
-        key = (message.channel.id, message.author.id)
-        last = last_wrong_channel_notice.get(key, 0)
-
-        if now - last >= WRONG_CHANNEL_COOLDOWN:
-            last_wrong_channel_notice[key] = now
-            await message.channel.send(
-                f"Hey {message.author.mention} you fucking idiot, commands go in <#{CHANNEL_ID}>... MORON 🙄",
-                delete_after=20
-            )
-        return
-
-    if message.channel.id != CHANNEL_ID:
-        return
-
-    if not is_quiet_command:
-        return
-
-    async def delete_command_later(msg: discord.Message):
-        await asyncio.sleep(COMMAND_CLEANUP_SECONDS)
-        try:
-            await msg.delete()
-        except Exception:
-            pass
-
-    client.loop.create_task(delete_command_later(message))
-
-    perms = getattr(message.author, "guild_permissions", None)
-    if not perms or not (perms.administrator or perms.manage_guild):
-        await message.channel.send(
+    # Admin check
+    member = interaction.user if isinstance(interaction.user, discord.Member) else None
+    if not member or not is_admin(member):
+        await interaction.response.send_message(
             "Hmm, I don't think so, only admins can shut me up🤭",
-            delete_after=COMMAND_CLEANUP_SECONDS
+            delete_after=DELETE_AFTER
         )
         return
 
-    parts = content.split()
-    if len(parts) == 1 or parts[1] == "status":
-        await message.channel.send(
+    choice = mode.value
+
+    if choice == "status":
+        await interaction.response.send_message(
             f"🙄Stop asking me things, quiet mode is **{'ON' if QUIET_MODE else 'OFF'}**.",
-            delete_after=COMMAND_CLEANUP_SECONDS
+            delete_after=DELETE_AFTER
         )
         return
 
-    if parts[1] in ("on", "true", "1", "enable", "enabled"):
+    if choice == "on":
         QUIET_MODE = True
-        await message.channel.send(
-            "😡Fine I'll be quiet. Quiet mode **ON** no more @here pings.",
-            delete_after=COMMAND_CLEANUP_SECONDS
+        await interaction.response.send_message(
+            "😡Fine I'll be quiet. Quiet mode **ON**. No more @here pings.",
+            delete_after=DELETE_AFTER
         )
         return
 
-    if parts[1] in ("off", "false", "0", "disable", "disabled"):
-        QUIET_MODE = False
-        await message.channel.send(
-            "😘Quiet mode **OFF** @here pings are back.",
-            delete_after=COMMAND_CLEANUP_SECONDS
-        )
-        return
-
-    await message.channel.send(
-        "Usage: `!quiet on`, `!quiet off`, or `!quiet status`",
-        delete_after=COMMAND_CLEANUP_SECONDS
+    QUIET_MODE = False
+    await interaction.response.send_message(
+        "😘Quiet mode **OFF**. @here pings are back 😈",
+        delete_after=DELETE_AFTER
     )
 
 # ============================================================
@@ -272,17 +250,17 @@ enemy_last_state = {}
 enemy_last_desc = {}
 
 async def check_enemy_travel():
-    await client.wait_until_ready()
+    await bot.wait_until_ready()
 
     if ENEMY_FACTION_ID == 0:
         print("ENEMY_FACTION_ID not set, skipping enemy travel tracking.")
         return
 
-    channel = client.get_channel(CHANNEL_ID)
+    channel = bot.get_channel(CHANNEL_ID)
     while channel is None:
         print(f"Channel {CHANNEL_ID} not found yet, retrying in 5s...")
         await asyncio.sleep(5)
-        channel = client.get_channel(CHANNEL_ID)
+        channel = bot.get_channel(CHANNEL_ID)
 
     try:
         resp = requests.get(
@@ -299,7 +277,7 @@ async def check_enemy_travel():
     except Exception as e:
         print(f"Error priming enemy travel cache: {e}")
 
-    while not client.is_closed():
+    while not bot.is_closed():
         try:
             resp = requests.get(
                 ENEMY_TORN_BASIC_URL.format(ENEMY_FACTION_ID),
@@ -382,25 +360,16 @@ async def check_enemy_travel():
         await asyncio.sleep(60)
 
 # ============================================================
-# Bot Startup
-# ============================================================
-@client.event
-async def on_ready():
-    print(f"Logged in as {client.user}")
-    client.loop.create_task(check_attacks())
-    client.loop.create_task(check_enemy_travel())
-
-# ============================================================
 # Retal Polling
 # ============================================================
 async def check_attacks():
-    await client.wait_until_ready()
+    await bot.wait_until_ready()
 
-    channel = client.get_channel(CHANNEL_ID)
+    channel = bot.get_channel(CHANNEL_ID)
     while channel is None:
         print(f"Channel {CHANNEL_ID} not found yet, retrying in 5s...")
         await asyncio.sleep(5)
-        channel = client.get_channel(CHANNEL_ID)
+        channel = bot.get_channel(CHANNEL_ID)
 
     try:
         response = requests.get(TORN_URL, timeout=10).json()
@@ -409,7 +378,7 @@ async def check_attacks():
     except Exception as e:
         print(f"Error fetching initial attacks: {e}")
 
-    while not client.is_closed():
+    while not bot.is_closed():
         try:
             response = requests.get(TORN_URL, timeout=10).json()
             attacks = response.get("attacks", {})
@@ -478,6 +447,22 @@ async def check_attacks():
         await asyncio.sleep(60)
 
 # ============================================================
+# Bot Startup
+# ============================================================
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+
+    try:
+        synced = await tree.sync()
+        print(f"Synced {len(synced)} commands")
+    except Exception as e:
+        print(f"Command sync failed: {e}")
+
+    bot.loop.create_task(check_attacks())
+    bot.loop.create_task(check_enemy_travel())
+
+# ============================================================
 # Run the bot
 # ============================================================
-client.run(DISCORD_TOKEN)
+bot.run(DISCORD_TOKEN)
