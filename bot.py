@@ -10,11 +10,8 @@ from datetime import datetime, timedelta, timezone
 
 # ============================================================
 # Retal Bot
-# Version: 🔧 v1.5.6
-# Change: Fix syntax + tidy enemy travel alerts:
-#         - Name is clickable
-#         - Travel text on same line as name
-#         - BS estimate shown under the name line
+# Version: 🔧 v1.5.7
+# Change: Retal alerts - attacker name is clickable hyperlink (no link at bottom)
 # ============================================================
 
 # ============================================================
@@ -332,7 +329,6 @@ async def check_enemy_travel():
                 bs_est = get_bs_estimate(uid)
                 bs_line = f"📊 **Est. Battle Stats:** {bs_est}\n" if bs_est else ""
 
-                # RETURNING HOME: In XXX -> Returning to Torn from XXX
                 if prev_desc.startswith("In ") and desc.startswith("Returning to Torn from"):
                     from_place = normalize_destination(extract_return_from(desc)) or "Unknown"
                     times = TRAVEL_TIMES_MIN.get(from_place)
@@ -357,7 +353,6 @@ async def check_enemy_travel():
                     await send_with_quiet_logic(channel, msg, delete_after=delete_after)
                     continue
 
-                # OUTBOUND TAKEOFF: Okay/Ok -> Traveling
                 if prev_state in (None, "Okay", "Ok") and state == "Traveling":
                     dest = normalize_destination(extract_destination(desc)) or "Unknown"
                     times = TRAVEL_TIMES_MIN.get(dest)
@@ -442,7 +437,11 @@ async def check_attacks():
                 raw_attacker_id = data.get("attacker_id", 0)
                 attacker_id = int(raw_attacker_id) if str(raw_attacker_id).isdigit() else 0
 
-                attacker_link = f"https://www.torn.com/profiles.php?XID={attacker_id}" if attacker_id > 0 else None
+                attacker_md = attacker
+                if attacker_id > 0:
+                    attacker_profile = f"https://www.torn.com/profiles.php?XID={attacker_id}"
+                    attacker_md = f"[{attacker}]({attacker_profile})"
+
                 bs_est = get_bs_estimate(attacker_id) if attacker_id > 0 else None
 
                 attack_ts = get_attack_timestamp(data)
@@ -454,11 +453,10 @@ async def check_attacks():
                 message = (
                     f"🚨 **Faction Member {result}!** 🚨\n"
                     f"⏳ **Retal ends:** <t:{retal_expires_ts}:R>\n"
-                    f"**Attacker:** {attacker}\n"
+                    f"**Attacker:** {attacker_md}\n"
                     f"**Defender:** {defender}\n"
                     f"**Respect Lost:** {respect_loss}\n"
                     + (f"📊 **Est. Battle Stats:** {bs_est}\n" if bs_est else "")
-                    + (f"🔗 {attacker_link}" if attacker_link else "🔗 *(Stealthed attacker — no profile link)*")
                 )
 
                 if QUIET_MODE:
