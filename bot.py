@@ -61,6 +61,7 @@ tree = bot.tree
 # ============================================================
 seen_attacks = set()
 QUIET_MODE = False
+FLIGHT_TRACKING_PAUSED = False
 
 stat_cache = {}
 CACHE_TTL = 10 * 60
@@ -244,6 +245,58 @@ async def quiet(interaction: discord.Interaction, mode: app_commands.Choice[str]
     )
 
 # ============================================================
+# Slash Command: /flights
+# Pause or resume enemy flight tracking
+# ============================================================
+@tree.command(name="flights", description="Pause or resume enemy flight tracking (admins only).")
+@app_commands.describe(mode="pause/resume/status")
+@app_commands.choices(mode=[
+    app_commands.Choice(name="pause", value="pause"),
+    app_commands.Choice(name="resume", value="resume"),
+    app_commands.Choice(name="status", value="status"),
+])
+async def flights(interaction: discord.Interaction, mode: app_commands.Choice[str]):
+    global FLIGHT_TRACKING_PAUSED
+
+    if interaction.channel_id != CHANNEL_ID:
+        await interaction.response.send_message(
+            f"{interaction.user.mention} wrong channel. Behave 😒",
+            delete_after=DELETE_AFTER
+        )
+        return
+
+    member = interaction.user if isinstance(interaction.user, discord.Member) else None
+    if not member or not is_admin(member):
+        await interaction.response.send_message(
+            "Nice try. Admins only 🛑",
+            delete_after=DELETE_AFTER
+        )
+        return
+
+    choice = mode.value
+
+    if choice == "status":
+        await interaction.response.send_message(
+            f"✈️ Flight tracking is **{'PAUSED' if FLIGHT_TRACKING_PAUSED else 'ACTIVE'}**.",
+            delete_after=DELETE_AFTER
+        )
+        return
+
+    if choice == "pause":
+        FLIGHT_TRACKING_PAUSED = True
+        await interaction.response.send_message(
+            "🛑 Flight tracking **PAUSED**. Radar offline.",
+            delete_after=DELETE_AFTER
+        )
+        return
+
+    FLIGHT_TRACKING_PAUSED = False
+    await interaction.response.send_message(
+        "🟢 Flight tracking **RESUMED**. Eyes back on the skies.",
+        delete_after=DELETE_AFTER
+    )
+
+# ============================================================
 # Enemy Flight Tracking
 # ============================================================
 enemy_last_state = {}
@@ -278,6 +331,10 @@ async def check_enemy_travel():
         print(f"Error priming enemy travel cache: {e}")
 
     while not bot.is_closed():
+        if FLIGHT_TRACKING_PAUSED:
+            await asyncio.sleep(60)
+            continue
+
         try:
             resp = requests.get(
                 ENEMY_TORN_BASIC_URL.format(ENEMY_FACTION_ID),
